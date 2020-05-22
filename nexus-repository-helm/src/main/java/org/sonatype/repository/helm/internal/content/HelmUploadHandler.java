@@ -1,6 +1,6 @@
 /*
  * Sonatype Nexus (TM) Open Source Version
- * Copyright (c) 2018-present Sonatype, Inc.
+ * Copyright (c) 2008-present Sonatype, Inc.
  * All rights reserved. Includes the third-party code listed at http://links.sonatype.com/products/nexus/oss/attributions.
  *
  * This program and the accompanying materials are made available under the terms of the Eclipse Public License Version 1.0,
@@ -10,7 +10,7 @@
  * of Sonatype, Inc. Apache Maven is a trademark of the Apache Software Foundation. M2eclipse is a trademark of the
  * Eclipse Foundation. All other trademarks are the property of their respective owners.
  */
-package org.sonatype.repository.helm.internal.orient;
+package org.sonatype.repository.helm.internal.content;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -30,24 +30,20 @@ import org.sonatype.nexus.repository.Repository;
 import org.sonatype.nexus.repository.rest.UploadDefinitionExtension;
 import org.sonatype.nexus.repository.security.ContentPermissionChecker;
 import org.sonatype.nexus.repository.security.VariableResolverAdapter;
-import org.sonatype.nexus.repository.storage.StorageFacet;
 import org.sonatype.nexus.repository.view.Content;
 import org.sonatype.nexus.repository.view.PartPayload;
 import org.sonatype.nexus.repository.view.payloads.StreamPayload;
-import org.sonatype.nexus.transaction.UnitOfWork;
 import org.sonatype.repository.helm.internal.HelmFormat;
-import org.sonatype.repository.helm.internal.content.HelmContentFacet;
-import org.sonatype.repository.helm.internal.content.HelmUploadHandlerSupport;
 
 import com.google.common.collect.Lists;
 
 /**
- * Support helm upload for web page
+ * Support for uploading helm components via UI & API
  *
- * @author yinlongfei
+ * @since 3.next
  */
-@Singleton
 @Named(HelmFormat.NAME)
+@Singleton
 public class HelmUploadHandler
     extends HelmUploadHandlerSupport
 {
@@ -67,18 +63,12 @@ public class HelmUploadHandler
     HelmContentFacet facet = repository.facet(HelmContentFacet.class);
 
     List<Content> responseContents = Lists.newArrayList();
-    UnitOfWork.begin(repository.facet(StorageFacet.class).txSupplier());
-    try {
-      for (Entry<String, PartPayload> entry : pathToPayload.entrySet()) {
-        String path = entry.getKey();
+    for (Entry<String, PartPayload> entry : pathToPayload.entrySet()) {
+      String path = entry.getKey();
 
-        Content content = (Content) facet.put(path, entry.getValue());
+      Content content = new Content(facet.put(path, entry.getValue()));
 
-        responseContents.add(content);
-      }
-    }
-    finally {
-      UnitOfWork.end();
+      responseContents.add(content);
     }
     return responseContents;
   }
@@ -88,7 +78,12 @@ public class HelmUploadHandler
       throws IOException
   {
     HelmContentFacet facet = repository.facet(HelmContentFacet.class);
-    return (Content) facet.put(path, new StreamPayload(() -> new FileInputStream(content), Files.size(contentPath),
-        Files.probeContentType(contentPath)));
+    return new Content(facet.put(path, new StreamPayload(() -> new FileInputStream(content), Files.size(contentPath),
+        Files.probeContentType(contentPath))));
+  }
+
+  @Override
+  protected String normalizePath(final String path) {
+    return "/" + super.normalizePath(path);
   }
 }

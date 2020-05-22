@@ -22,12 +22,17 @@ import javax.ws.rs.core.MediaType;
 import org.sonatype.nexus.common.app.BaseUrlHolder;
 import org.sonatype.nexus.pax.exam.NexusPaxExamSupport;
 import org.sonatype.nexus.repository.Repository;
+import org.sonatype.nexus.repository.rest.internal.resources.ComponentsResource;
 import org.sonatype.nexus.repository.storage.Asset;
 import org.sonatype.nexus.repository.storage.Component;
 import org.sonatype.nexus.repository.storage.ComponentMaintenance;
 import org.sonatype.nexus.testsuite.testsupport.NexusITSupport;
 
 import org.apache.http.HttpResponse;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.hamcrest.MatcherAssert;
 import org.junit.Before;
 import org.junit.Test;
@@ -35,6 +40,7 @@ import org.ops4j.pax.exam.Configuration;
 import org.ops4j.pax.exam.Option;
 
 import static java.lang.String.format;
+import static org.apache.http.entity.ContentType.APPLICATION_OCTET_STREAM;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -166,5 +172,27 @@ public class HelmHostedIT
 
   private void uploadSinglePackage(String name) throws IOException {
     client.put(format("%s/%s", PKG_PATH, name), fileToHttpEntity(name));
+  }
+
+  @Test
+  public void canUploadViaRest() throws Exception {
+    try (CloseableHttpClient client = clientBuilder().build()) {
+      MultipartEntityBuilder builder = MultipartEntityBuilder.create();
+      builder.addTextBody("directory", "/foo");
+      builder.addTextBody("asset1.filename", "file1.txt");
+      builder.addBinaryBody("asset1", "content".getBytes(), APPLICATION_OCTET_STREAM, "file");
+
+      HttpPost post = new HttpPost(String.format("%s%s%s?repository=%s",
+          nexusUrl, REST_SERVICE_PATH, ComponentsResource.RESOURCE_URI, repository));
+      post.setEntity(builder.build());
+
+      CloseableHttpResponse response = client.execute(post, clientContext());
+
+      assertThat(response.getStatusLine().getStatusCode(), is(204));
+    }
+
+    try (CloseableHttpResponse response = client.get("foo/file1.txt")) {
+      assertThat(response.getStatusLine().getStatusCode(), is(200));
+    }
   }
 }
