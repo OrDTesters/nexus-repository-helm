@@ -27,7 +27,9 @@ import org.sonatype.nexus.repository.upload.AssetUpload;
 import org.sonatype.nexus.repository.upload.ComponentUpload;
 import org.sonatype.nexus.repository.upload.UploadHandler;
 import org.sonatype.nexus.repository.upload.UploadResponse;
+import org.sonatype.nexus.repository.view.Content;
 import org.sonatype.nexus.repository.view.PartPayload;
+import org.sonatype.repository.helm.internal.AssetKind;
 import org.sonatype.repository.helm.internal.HelmUploadHandlerTestSupport;
 import org.sonatype.repository.helm.internal.content.HelmContentFacet;
 
@@ -97,13 +99,13 @@ public class HelmUploadHandlerTest
     when(assetPayload.componentId()).thenReturn(new DetachedEntityId("foo"));
     when(attributesMap.get(Asset.class)).thenReturn(assetPayload);
     when(content.getAttributes()).thenReturn(attributesMap);
-    when(helmFacet.put(any(), any())).thenReturn(content);
+    when(helmFacet.putIndex(any(), any(), any())).thenReturn(content);
     UploadResponse uploadResponse = underTest.handle(repository, component);
     assertThat(uploadResponse.getAssetPaths(), contains("org/apache/maven/foo.jar", "org/apache/maven/bar.jar"));
     assertThat(uploadResponse.getComponentId().getValue(), is("foo"));
 
     ArgumentCaptor<String> pathCapture = ArgumentCaptor.forClass(String.class);
-    verify(helmFacet, times(2)).put(pathCapture.capture(), any(PartPayload.class));
+    verify(helmFacet, times(2)).putIndex(pathCapture.capture(), any(Content.class) , any(AssetKind.class));
 
     List<String> paths = pathCapture.getAllValues();
 
@@ -133,11 +135,11 @@ public class HelmUploadHandlerTest
     when(assetPayload.componentId()).thenReturn(new DetachedEntityId("foo"));
     when(attributesMap.get(Asset.class)).thenReturn(assetPayload);
     when(content.getAttributes()).thenReturn(attributesMap);
-    when(helmFacet.put(any(), any())).thenReturn(content);
+    when(helmFacet.putIndex(any(), any(), any())).thenReturn(content);
     underTest.handle(repository, component);
 
     ArgumentCaptor<String> pathCapture = ArgumentCaptor.forClass(String.class);
-    verify(helmFacet).put(pathCapture.capture(), any(PartPayload.class));
+    verify(helmFacet).putIndex(pathCapture.capture(), any(Content.class), any(AssetKind.class));
 
     String path = pathCapture.getValue();
     assertNotNull(path);

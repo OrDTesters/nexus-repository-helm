@@ -17,6 +17,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -33,13 +34,17 @@ import org.sonatype.nexus.repository.security.VariableResolverAdapter;
 import org.sonatype.nexus.repository.storage.StorageFacet;
 import org.sonatype.nexus.repository.view.Content;
 import org.sonatype.nexus.repository.view.PartPayload;
+import org.sonatype.nexus.repository.view.Payload;
 import org.sonatype.nexus.repository.view.payloads.StreamPayload;
 import org.sonatype.nexus.transaction.UnitOfWork;
+import org.sonatype.repository.helm.internal.AssetKind;
 import org.sonatype.repository.helm.internal.HelmFormat;
 import org.sonatype.repository.helm.internal.content.HelmContentFacet;
 import org.sonatype.repository.helm.internal.content.HelmUploadHandlerSupport;
 
 import com.google.common.collect.Lists;
+import com.sun.jna.platform.unix.solaris.LibKstat.KstatNamed.UNION.STR;
+import org.elasticsearch.common.recycler.Recycler.C;
 
 /**
  * Support helm upload for web page
@@ -71,8 +76,9 @@ public class HelmUploadHandler
     try {
       for (Entry<String, PartPayload> entry : pathToPayload.entrySet()) {
         String path = entry.getKey();
-
-        Content content = (Content) facet.put(path, entry.getValue());
+        String fileName = Paths.get(path).getFileName().toString();
+        AssetKind assetKind = AssetKind.getAssetKindByFileName(fileName);
+        Content content = facet.putIndex(path, (Content) entry.getValue(), assetKind);
 
         responseContents.add(content);
       }
@@ -88,7 +94,10 @@ public class HelmUploadHandler
       throws IOException
   {
     HelmContentFacet facet = repository.facet(HelmContentFacet.class);
-    return (Content) facet.put(path, new StreamPayload(() -> new FileInputStream(content), Files.size(contentPath),
-        Files.probeContentType(contentPath)));
+    String fileName = Paths.get(path).getFileName().toString();
+    AssetKind assetKind = AssetKind.getAssetKindByFileName(fileName);
+    Payload streamPayload = new StreamPayload(() -> new FileInputStream(content), Files.size(contentPath),
+        Files.probeContentType(contentPath));
+    return facet.putIndex(path, (Content) streamPayload, assetKind );
   }
 }
