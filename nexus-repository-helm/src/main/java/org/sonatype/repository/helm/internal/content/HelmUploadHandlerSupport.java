@@ -13,10 +13,13 @@
 package org.sonatype.repository.helm.internal.content;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,20 +28,27 @@ import org.sonatype.nexus.repository.Repository;
 import org.sonatype.nexus.repository.rest.UploadDefinitionExtension;
 import org.sonatype.nexus.repository.security.ContentPermissionChecker;
 import org.sonatype.nexus.repository.security.VariableResolverAdapter;
-import org.sonatype.nexus.repository.upload.AssetUpload;
+import org.sonatype.nexus.repository.storage.StorageFacet;
+import org.sonatype.nexus.repository.storage.TempBlob;
 import org.sonatype.nexus.repository.upload.ComponentUpload;
 import org.sonatype.nexus.repository.upload.UploadDefinition;
-import org.sonatype.nexus.repository.upload.UploadFieldDefinition;
-import org.sonatype.nexus.repository.upload.UploadFieldDefinition.Type;
 import org.sonatype.nexus.repository.upload.UploadHandlerSupport;
-import org.sonatype.nexus.repository.upload.UploadRegexMap;
 import org.sonatype.nexus.repository.upload.UploadResponse;
 import org.sonatype.nexus.repository.view.Content;
 import org.sonatype.nexus.repository.view.PartPayload;
+import org.sonatype.nexus.repository.view.Payload;
+import org.sonatype.nexus.repository.view.payloads.StreamPayload;
+import org.sonatype.nexus.rest.ValidationErrorsException;
+import org.sonatype.repository.helm.HelmAttributes;
+import org.sonatype.repository.helm.internal.AssetKind;
 import org.sonatype.repository.helm.internal.HelmFormat;
+import org.sonatype.repository.helm.internal.util.HelmAttributeParser;
+
+import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyMap;
-import static java.util.Collections.singletonList;
+import static org.sonatype.repository.helm.internal.HelmFormat.HASH_ALGORITHMS;
+import static org.sonatype.repository.helm.internal.HelmFormat.NAME;
 
 /**
  * Common base for helm upload handlers
@@ -48,13 +58,7 @@ import static java.util.Collections.singletonList;
 public abstract class HelmUploadHandlerSupport
     extends UploadHandlerSupport
 {
-  protected static final String FILENAME = "filename";
-
-  protected static final String DIRECTORY = "directory";
-
-  protected static final String DIRECTORY_HELP_TEXT = "Destination for uploaded files (e.g. /path/to/files/)";
-
-  protected static final String FIELD_GROUP_NAME = "Component attributes";
+  protected final HelmAttributeParser helmPackageParser;
 
   protected final ContentPermissionChecker contentPermissionChecker;
 
@@ -64,37 +68,31 @@ public abstract class HelmUploadHandlerSupport
 
   public HelmUploadHandlerSupport(
       final ContentPermissionChecker contentPermissionChecker,
+      final HelmAttributeParser helmPackageParser,
       final VariableResolverAdapter variableResolverAdapter,
       final Set<UploadDefinitionExtension> uploadDefinitionExtensions)
   {
     super(uploadDefinitionExtensions);
     this.contentPermissionChecker = contentPermissionChecker;
     this.variableResolverAdapter = variableResolverAdapter;
+    this.helmPackageParser = helmPackageParser;
   }
 
   @Override
   public UploadResponse handle(final Repository repository, final ComponentUpload upload) throws IOException {
-    String basePath = upload.getFields().get(DIRECTORY).trim();
-
     //Data holders for populating the UploadResponse
-    Map<String, PartPayload> pathToPayload = new LinkedHashMap<>();
+    List<PartPayload> pathToPayload = new ArrayList<>();
 
-    for (AssetUpload asset : upload.getAssetUploads()) {
-      String path = normalizePath(basePath + '/' + asset.getFields().get(FILENAME).trim());
+    upload.getAssetUploads().forEach(asset -> pathToPayload.add(asset.getPayload()));
 
-      ensurePermitted(repository.getName(), HelmFormat.NAME, path, emptyMap());
+    Map<String, Content> responseContents = getResponseContents(repository, pathToPayload);
 
-      pathToPayload.put(path, asset.getPayload());
-    }
-
-    List<Content> responseContents = getResponseContents(repository, pathToPayload);
-
-    return new UploadResponse(responseContents, new ArrayList<>(pathToPayload.keySet()));
+    return new UploadResponse(responseContents.values(), new ArrayList<>(responseContents.keySet()));
   }
 
-  protected abstract List<Content> getResponseContents(
+  protected abstract Map<String, Content> getResponseContents(
       final Repository repository,
-      final Map<String, PartPayload> pathToPayload)
+      final List<PartPayload> pathToPayload)
       throws IOException;
 
   @Override
@@ -110,35 +108,58 @@ public abstract class HelmUploadHandlerSupport
     return doPut(repository, content, path, contentPath);
   }
 
-  protected abstract Content doPut(
+  protected Content doPut(final Repository repository, final File content, final String path, final Path contentPath)
+      throws IOException
+  {
+    HelmContentFacet facet = repository.facet(HelmContentFacet.class);
+    String fileName = Paths.get(path).getFileName().toString();
+    AssetKind assetKind = AssetKind.getAssetKindByFileName(fileName);
+    Payload streamPayload = new StreamPayload(() -> new FileInputStream(content), Files.size(contentPath),
+        Files.probeContentType(contentPath));
+    return facet.putIndex(path, (Content) streamPayload, assetKind);
+  }
+
+  protected void processPayload(
       final Repository repository,
-      final File content,
-      final String path,
-      final Path contentPath)
-      throws IOException;
+      final HelmContentFacet facet,
+      final StorageFacet storageFacet, final Map<String, Content> responseContents, final PartPayload payload)
+      throws IOException
+  {
+    String fileName = payload.getName() != null ? payload.getName() : StringUtils.EMPTY;
+    AssetKind assetKind = AssetKind.getAssetKindByFileName(fileName);
 
-  protected String normalizePath(final String path) {
-    String result = path.replaceAll("/+", "/");
-
-    if (result.startsWith("/")) {
-      result = result.substring(1);
+    if (assetKind != AssetKind.HELM_PROVENANCE && assetKind != AssetKind.HELM_PACKAGE) {
+      throw new IllegalArgumentException("Unsupported extension. Extension must be .tgz or .tgz.prov");
     }
 
-    if (result.endsWith("/")) {
-      result = result.substring(0, result.length() - 1);
-    }
+    try (TempBlob tempBlob = storageFacet.createTempBlob(payload, HASH_ALGORITHMS)) {
+      HelmAttributes attributesFromInputStream = helmPackageParser.getAttributes(assetKind, tempBlob.get());
+      String extension = assetKind.getExtension();
+      String name = attributesFromInputStream.getName();
+      String version = attributesFromInputStream.getVersion();
 
-    return result;
+      if (StringUtils.isBlank(name)) {
+        throw new ValidationErrorsException("Metadata is missing the name attribute");
+      }
+
+      if (StringUtils.isBlank(version)) {
+        throw new ValidationErrorsException("Metadata is missing the version attribute");
+      }
+
+      String path = String.format("%s-%s%s", name, version, extension);
+
+      ensurePermitted(repository.getName(), NAME, path, Collections.emptyMap());
+
+      Content content = facet.putIndex(path, (Content) payload, assetKind);
+
+      responseContents.put(path, content);
+    }
   }
 
   @Override
   public UploadDefinition getDefinition() {
     if (definition == null) {
-      definition = getDefinition(HelmFormat.NAME, true,
-          singletonList(
-              new UploadFieldDefinition(DIRECTORY, DIRECTORY_HELP_TEXT, false, Type.STRING, FIELD_GROUP_NAME)),
-          singletonList(new UploadFieldDefinition(FILENAME, false, Type.STRING)),
-          new UploadRegexMap("(.*)", FILENAME));
+      definition = getDefinition(NAME, false);
     }
     return definition;
   }

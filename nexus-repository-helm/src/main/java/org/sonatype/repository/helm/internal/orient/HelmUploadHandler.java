@@ -12,15 +12,10 @@
  */
 package org.sonatype.repository.helm.internal.orient;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 
 import javax.inject.Inject;
@@ -34,17 +29,11 @@ import org.sonatype.nexus.repository.security.VariableResolverAdapter;
 import org.sonatype.nexus.repository.storage.StorageFacet;
 import org.sonatype.nexus.repository.view.Content;
 import org.sonatype.nexus.repository.view.PartPayload;
-import org.sonatype.nexus.repository.view.Payload;
-import org.sonatype.nexus.repository.view.payloads.StreamPayload;
 import org.sonatype.nexus.transaction.UnitOfWork;
-import org.sonatype.repository.helm.internal.AssetKind;
 import org.sonatype.repository.helm.internal.HelmFormat;
 import org.sonatype.repository.helm.internal.content.HelmContentFacet;
 import org.sonatype.repository.helm.internal.content.HelmUploadHandlerSupport;
-
-import com.google.common.collect.Lists;
-import com.sun.jna.platform.unix.solaris.LibKstat.KstatNamed.UNION.STR;
-import org.elasticsearch.common.recycler.Recycler.C;
+import org.sonatype.repository.helm.internal.util.HelmAttributeParser;
 
 /**
  * Support helm upload for web page
@@ -59,45 +48,30 @@ public class HelmUploadHandler
   @Inject
   public HelmUploadHandler(
       final ContentPermissionChecker contentPermissionChecker,
+      final HelmAttributeParser helmPackageParser,
       @Named("simple") final VariableResolverAdapter variableResolverAdapter,
       final Set<UploadDefinitionExtension> uploadDefinitionExtensions)
   {
-    super(contentPermissionChecker, variableResolverAdapter, uploadDefinitionExtensions);
+    super(contentPermissionChecker, helmPackageParser, variableResolverAdapter, uploadDefinitionExtensions);
   }
 
   @Override
-  protected List<Content> getResponseContents(final Repository repository, final Map<String, PartPayload> pathToPayload)
+  protected Map<String, Content> getResponseContents(final Repository repository, final List<PartPayload> payloads)
       throws IOException
   {
     HelmContentFacet facet = repository.facet(HelmContentFacet.class);
+    StorageFacet storageFacet = repository.facet(StorageFacet.class);
 
-    List<Content> responseContents = Lists.newArrayList();
-    UnitOfWork.begin(repository.facet(StorageFacet.class).txSupplier());
+    Map<String, Content> responseContents = new LinkedHashMap<>();
+    UnitOfWork.begin(storageFacet.txSupplier());
     try {
-      for (Entry<String, PartPayload> entry : pathToPayload.entrySet()) {
-        String path = entry.getKey();
-        String fileName = Paths.get(path).getFileName().toString();
-        AssetKind assetKind = AssetKind.getAssetKindByFileName(fileName);
-        Content content = facet.putIndex(path, (Content) entry.getValue(), assetKind);
-
-        responseContents.add(content);
+      for (PartPayload payload : payloads) {
+        processPayload(repository, facet, storageFacet, responseContents, payload);
       }
     }
     finally {
       UnitOfWork.end();
     }
     return responseContents;
-  }
-
-  @Override
-  protected Content doPut(final Repository repository, final File content, final String path, final Path contentPath)
-      throws IOException
-  {
-    HelmContentFacet facet = repository.facet(HelmContentFacet.class);
-    String fileName = Paths.get(path).getFileName().toString();
-    AssetKind assetKind = AssetKind.getAssetKindByFileName(fileName);
-    Payload streamPayload = new StreamPayload(() -> new FileInputStream(content), Files.size(contentPath),
-        Files.probeContentType(contentPath));
-    return facet.putIndex(path, (Content) streamPayload, assetKind );
   }
 }
