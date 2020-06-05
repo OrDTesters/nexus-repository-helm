@@ -97,7 +97,8 @@
             <version>1.6.8</version>
             <extensions>true</extensions>
             <configuration>
-              <autoReleaseAfterClose>true</autoReleaseAfterClose>
+              <!--              TODO BEFORE RELEASE SET TRUE-->
+              <autoReleaseAfterClose>false</autoReleaseAfterClose>
             </configuration>
           </plugin>
           <plugin>
